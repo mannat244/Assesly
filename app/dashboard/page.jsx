@@ -98,7 +98,7 @@ export default function DashboardPage() {
                 } catch (e) { console.error("Failed to parse history", e); }
             }
         }
-    }, [user, router]);
+    }, [user]);
 
     const companies = ["Google", "Microsoft", "Amazon", "Meta", "Netflix"];
 
