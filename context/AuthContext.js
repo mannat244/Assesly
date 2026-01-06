@@ -5,6 +5,19 @@ import { useRouter } from 'next/navigation';
 
 const AuthContext = createContext();
 
+// Helper functions for localStorage operations
+const saveUserToLocalStorage = (userData) => {
+    if (typeof window !== 'undefined') {
+        localStorage.setItem('user', JSON.stringify(userData));
+    }
+};
+
+const clearUserFromLocalStorage = () => {
+    if (typeof window !== 'undefined') {
+        localStorage.removeItem('user');
+    }
+};
+
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
     // Default to true so we don't flash login screen while checking session
@@ -20,16 +33,10 @@ export function AuthProvider({ children }) {
                     const data = await res.json();
                     if (data.isLoggedIn) {
                         setUser(data);
-                        // Sync with localStorage
-                        if (typeof window !== 'undefined') {
-                            localStorage.setItem('user', JSON.stringify(data));
-                        }
+                        saveUserToLocalStorage(data);
                     } else {
                         setUser(null);
-                        // Clear localStorage if not logged in
-                        if (typeof window !== 'undefined') {
-                            localStorage.removeItem('user');
-                        }
+                        clearUserFromLocalStorage();
                     }
                 }
             } catch (error) {
@@ -53,10 +60,7 @@ export function AuthProvider({ children }) {
         if (res.ok) {
             const userData = { ...data.user, isLoggedIn: true };
             setUser(userData);
-            // Persist user to localStorage for dashboard compatibility
-            if (typeof window !== 'undefined') {
-                localStorage.setItem('user', JSON.stringify(userData));
-            }
+            saveUserToLocalStorage(userData);
             return { success: true };
         } else {
             return { success: false, error: data.message };
@@ -75,10 +79,7 @@ export function AuthProvider({ children }) {
         if (res.ok) {
             const userData = { ...data.user, isLoggedIn: true };
             setUser(userData);
-            // Persist user to localStorage for dashboard compatibility
-            if (typeof window !== 'undefined') {
-                localStorage.setItem('user', JSON.stringify(userData));
-            }
+            saveUserToLocalStorage(userData);
             return { success: true };
         } else {
             return { success: false, error: data.message };
@@ -88,10 +89,7 @@ export function AuthProvider({ children }) {
     const logout = async () => {
         await fetch('/api/auth/logout', { method: 'POST' });
         setUser(null);
-        // Clear user from localStorage
-        if (typeof window !== 'undefined') {
-            localStorage.removeItem('user');
-        }
+        clearUserFromLocalStorage();
         router.push('/login');
     };
 

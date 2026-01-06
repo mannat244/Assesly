@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import DashboardNav from "@/components/dashboard/DashboardNav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +26,7 @@ export default function DashboardPage() {
     const [showResumeEditor, setShowResumeEditor] = useState(false);
     const [recentInterviews, setRecentInterviews] = useState([]);
     const [stats, setStats] = useState({ total: 0, avgScore: 0, lastWeek: 0 });
+    const dataLoaded = useRef(false);
 
     // Authentication check
     useEffect(() => {
@@ -34,9 +35,11 @@ export default function DashboardPage() {
         }
     }, [user, loading, router]);
 
-    // Hybrid Sync Logic
+    // Hybrid Sync Logic - only run once when user is available
     useEffect(() => {
-        if (!user) return; // Don't load data if not authenticated
+        if (!user || dataLoaded.current) return; // Don't load data if not authenticated or already loaded
+        
+        dataLoaded.current = true;
         
         if (typeof window !== "undefined") {
 
