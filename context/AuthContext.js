@@ -20,8 +20,16 @@ export function AuthProvider({ children }) {
                     const data = await res.json();
                     if (data.isLoggedIn) {
                         setUser(data);
+                        // Sync with localStorage
+                        if (typeof window !== 'undefined') {
+                            localStorage.setItem('user', JSON.stringify(data));
+                        }
                     } else {
                         setUser(null);
+                        // Clear localStorage if not logged in
+                        if (typeof window !== 'undefined') {
+                            localStorage.removeItem('user');
+                        }
                     }
                 }
             } catch (error) {
@@ -43,7 +51,12 @@ export function AuthProvider({ children }) {
         const data = await res.json();
 
         if (res.ok) {
-            setUser({ ...data.user, isLoggedIn: true });
+            const userData = { ...data.user, isLoggedIn: true };
+            setUser(userData);
+            // Persist user to localStorage for dashboard compatibility
+            if (typeof window !== 'undefined') {
+                localStorage.setItem('user', JSON.stringify(userData));
+            }
             return { success: true };
         } else {
             return { success: false, error: data.message };
@@ -60,7 +73,12 @@ export function AuthProvider({ children }) {
         const data = await res.json();
 
         if (res.ok) {
-            setUser({ ...data.user, isLoggedIn: true });
+            const userData = { ...data.user, isLoggedIn: true };
+            setUser(userData);
+            // Persist user to localStorage for dashboard compatibility
+            if (typeof window !== 'undefined') {
+                localStorage.setItem('user', JSON.stringify(userData));
+            }
             return { success: true };
         } else {
             return { success: false, error: data.message };
@@ -70,6 +88,10 @@ export function AuthProvider({ children }) {
     const logout = async () => {
         await fetch('/api/auth/logout', { method: 'POST' });
         setUser(null);
+        // Clear user from localStorage
+        if (typeof window !== 'undefined') {
+            localStorage.removeItem('user');
+        }
         router.push('/login');
     };
 

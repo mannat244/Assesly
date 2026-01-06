@@ -13,9 +13,11 @@ import Link from "next/link";
 import { BarChart3, Clock, TrendingUp, ArrowRight, Briefcase, FileText, Edit } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import jobDescriptions from "@/lib/jobDescriptions.json";
+import { useAuth } from "@/context/AuthContext";
 
 export default function DashboardPage() {
     const router = useRouter();
+    const { user, loading } = useAuth();
     const [selectedCompany, setSelectedCompany] = useState(null);
     const [selectedRole, setSelectedRole] = useState(null);
     const [useCustomJD, setUseCustomJD] = useState(false);
@@ -25,14 +27,18 @@ export default function DashboardPage() {
     const [recentInterviews, setRecentInterviews] = useState([]);
     const [stats, setStats] = useState({ total: 0, avgScore: 0, lastWeek: 0 });
 
+    // Authentication check
+    useEffect(() => {
+        if (!loading && !user) {
+            router.push("/login");
+        }
+    }, [user, loading, router]);
+
     // Hybrid Sync Logic
     useEffect(() => {
+        if (!user) return; // Don't load data if not authenticated
+        
         if (typeof window !== "undefined") {
-            const user = localStorage.getItem("user");
-            if (!user) {
-                router.push("/login");
-                return;
-            }
 
             // 1. Try Local Storage first (Speed)
             const savedContext = localStorage.getItem("interviewContext");
@@ -89,7 +95,7 @@ export default function DashboardPage() {
                 } catch (e) { console.error("Failed to parse history", e); }
             }
         }
-    }, [router]);
+    }, [user, router]);
 
     const companies = ["Google", "Microsoft", "Amazon", "Meta", "Netflix"];
 
@@ -160,6 +166,23 @@ export default function DashboardPage() {
     };
 
     const currentJD = getJobDescription();
+
+    // Show loading state while checking authentication
+    if (loading) {
+        return (
+            <div className="flex min-h-screen items-center justify-center">
+                <div className="text-center">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto mb-4"></div>
+                    <p className="text-muted-foreground">Loading...</p>
+                </div>
+            </div>
+        );
+    }
+
+    // Don't render dashboard content if not authenticated
+    if (!user) {
+        return null;
+    }
 
     return (
         <div className="flex min-h-screen flex-col">
