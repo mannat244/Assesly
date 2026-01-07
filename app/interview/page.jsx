@@ -22,6 +22,7 @@ export default function InterviewPage() {
     const [micOn, setMicOn] = useState(true);
     const [cameraOn, setCameraOn] = useState(true);
     const [messages, setMessages] = useState([]); // Initialized in useEffect
+    const [contextState, setContextState] = useState({ targetCompany: "General", jobDescription: "", resume: "", interviewHistory: [] }); // DB-First Context
     const [isGeneratingFeedback, setIsGeneratingFeedback] = useState(false);
     const messagesRef = useRef([]); // Ref to hold latest messages for closures
 
@@ -94,25 +95,50 @@ export default function InterviewPage() {
         }
     };
 
-    // Initialize - Load Context and Setup Prompt
+    // Initialize - Fetch Context from DB and Setup Prompt
     useEffect(() => {
-        if (typeof window !== "undefined") {
-            const userStr = localStorage.getItem("user");
-            const contextStr = localStorage.getItem("interviewContext");
+        async function fetchContext() {
+            try {
+                const res = await fetch("/api/user/sync");
+                if (!res.ok) {
+                    if (res.status === 401) router.push("/login");
+                    else console.error("Failed to load interview context");
+                    return;
+                }
 
-            const user = userStr ? JSON.parse(userStr) : { name: "Candidate" };
-            const context = contextStr ? JSON.parse(contextStr) : { resume: "", jobDescription: "", targetCompany: "General Tech" };
+                const data = await res.json();
 
-            const systemPrompt = `
-                You are Sneha, a Senior Software Engineer and interviewer at ${context.targetCompany}.
+                // Fallbacks if data is missing
+                const userName = data.name || "Candidate";
+                const targetCompany = data.targetCompany || "General Tech";
+                const jobDescription = data.jobDescription || "Software Engineer";
+                const resume = data.resume || "Not provided";
+
+                // Save critical context for feedback/history later if needed (though history uses DB now too)
+                // We can keep a minimal local context state if needed, or just rely on the conversation
+                // For now, we mainly need to set the system prompt.
+
+                // Also store minimal context for the "End Interview" feedback payload if it still reads strictly from localStorage? 
+                // Wait, "End Interview" reads from localStorage in the current code (line ~670). 
+                // We should update "End Interview" logic later or just update localStorage here as a "cache" for that button. 
+                // To be safe and minimal: We update localStorage here JUST so the existing "End Interview" button works without refactoring it yet.
+                // OR better: Refactor "End Interview" logic too. 
+                // Let's refactor "End Interview" logic in a separate step or just include it?
+                // The prompt says "remove local storage". So we must refactor "End Interview" too.
+                // For this step, simply SET the messages. 
+                // I will add a state `interviewContext` to the component to store this data for the "End Interview" button.
+
+                const systemPrompt = `
+                You are Sneha, a Senior Software Engineer and interviewer at ${targetCompany}.
 
                 You are calm, precise, and professional. You are not hostile and not friendly.
                 Your goal is to evaluate how the candidate thinks, not to intimidate them.
 
                 CONTEXT:
-                Target Company: ${context.targetCompany}
-                Job Description: ${context.jobDescription || "Software Engineer"}
-                Candidate Resume: ${context.resume || "Not provided"}
+                Candidate Name: ${userName}
+                Target Company: ${targetCompany}
+                Job Description: ${jobDescription}
+                Candidate Resume: ${resume}
 
                 INTERVIEW STYLE:
                 - Speak like a real interviewer in a live video interview.
@@ -124,7 +150,7 @@ export default function InterviewPage() {
                 - You may acknowledge answers briefly with phrases like "Okay", "I see", or "Got it".
 
                 INTERVIEW RULES:
-                1. **PHASE 1: INTRODUCTION**: Start by greeting the candidate by name. Ask them to briefly introduce themselves or walk you through their resume.
+                1. **PHASE 1: INTRODUCTION**: Start by greeting the candidate by name (${userName}). Ask them to briefly introduce themselves or walk you through their resume.
                 2. **PHASE 2: PROJECT DEEP DIVE**: Pick a specific project from their resume (or ask about one if missing).
                    - Ask: "How did you implement [feature]?" or "Tell me about the architecture of [Project X]."
                    - Dig into specific technical decisions (DB choice, API design, challenges).
@@ -136,13 +162,22 @@ export default function InterviewPage() {
                    - If they mention a technology, ask *why* they used it.
 
                 Your goal is to decide whether this candidate can be trusted to work on real production systems.
-            `;
+                `;
 
-            const initialMessages = [{ role: "system", content: systemPrompt }];
-            setMessages(initialMessages);
-            messagesRef.current = initialMessages;
+                const initialMessages = [{ role: "system", content: systemPrompt }];
+                setMessages(initialMessages);
+                messagesRef.current = initialMessages;
+
+                // Store context in state for Feedback generation and History updates
+                setContextState({ targetCompany, jobDescription, resume, interviewHistory: data.interviewHistory || [] });
+
+            } catch (error) {
+                console.error("Error fetching context:", error);
+            }
         }
-    }, []);
+
+        fetchContext();
+    }, [router]);
 
     // Initialize Webcam
     useEffect(() => {
@@ -369,9 +404,10 @@ export default function InterviewPage() {
             }
 
             recognitionRef.current = new SpeechRecognition();
-            recognitionRef.current.continuous = true;
+            // MOBILE-SAFE CONFIG: Turn-based, not continuous
+            recognitionRef.current.continuous = false;
             recognitionRef.current.interimResults = true;
-            recognitionRef.current.lang = 'en-US';
+            recognitionRef.current.lang = 'en-IN'; // Better accent support
 
             recognitionRef.current.onresult = (event) => {
                 if (isSpeakingRef.current || isProcessingRef.current) return;
@@ -379,8 +415,8 @@ export default function InterviewPage() {
                 let finalTranscript = "";
                 let interimTranscript = "";
 
-                // Replaces the "append" logic with "rebuild" logic to fix Android duplication bugs
-                for (let i = 0; i < event.results.length; ++i) {
+                // Mobile-safe: Only process NEW results from this turn
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
                         finalTranscript += event.results[i][0].transcript;
                     } else {
@@ -388,56 +424,63 @@ export default function InterviewPage() {
                     }
                 }
 
-                // Combine final and interim for real-time feedback
-                const currentText = (finalTranscript + " " + interimTranscript).trim();
-
-                // Only update if we have text. 
-                // Note: We deliberately overwrite 'transcript' completely instead of appending to 'prev'
-                // because event.results contains the entire session history until stop() is called.
-                if (currentText) {
-                    setTranscript(currentText);
+                // UI update: Show whatever we have (interim or final)
+                const displayText = interimTranscript || finalTranscript;
+                if (displayText) {
+                    setTranscript(displayText);
                 }
 
-                clearTimeout(silenceTimer.current);
-                if (micOnRef.current && !isSpeakingRef.current && !isProcessingRef.current) {
-                    silenceTimer.current = setTimeout(() => stopAndSubmit(), 3000); // 3s of silence = turn end
+                // Submission logic: Only trust FINAL results
+                if (finalTranscript.trim()) {
+                    clearTimeout(silenceTimer.current);
+
+                    // Small delay to allow for natural pauses between sentences in a single turn, 
+                    // but since continuous=false, this "turn" might end abruptly. 
+                    // We need to accumulate? No, turn-based means we interpret *this* utternace.
+                    // For short 800ms silence = submit.
+
+                    // Actually, with continuous=false, onend might fire right after final.
+                    // We should capture the final text and store it, or submit it.
+                    // Let's use the silence timer to debounce the submission.
+
+                    // Update the Ref so stopAndSubmit has it
+                    transcriptRef.current = finalTranscript;
+
+                    silenceTimer.current = setTimeout(() => {
+                        stopAndSubmit();
+                    }, 800);
                 }
             };
 
             recognitionRef.current.onerror = (event) => {
-                console.warn("Speech Recognition Error:", event.error);
+                // Ignore 'no-speech' errors which are common
+                if (event.error !== 'no-speech') {
+                    console.warn("Speech Recognition Error:", event.error);
+                }
+
                 if (event.error === 'not-allowed') {
                     setError("Microphone access denied.");
                     setMicOn(false);
-                } else if (event.error === 'no-speech') {
-                    if (transcriptRef.current && transcriptRef.current.trim().length > 0) {
-                        stopAndSubmit();
-                    } else if (micOnRef.current && !isSpeakingRef.current && !isProcessingRef.current) {
-                        recognitionRef.current.stop();
-                    }
-                } else if (event.error === 'network') {
-                    if (micOnRef.current) recognitionRef.current.stop();
                 }
             };
 
             recognitionRef.current.onend = () => {
                 setIsRecording(false);
-                clearTimeout(silenceTimer.current);
-                if (hasStartedRef.current && micOnRef.current && !isSpeakingRef.current && !isProcessingRef.current && !isGeneratingFeedbackRef.current) {
-                    setTimeout(() => startListening(), 300);
+
+                // Auto-restart loop (The "Pulse" of the conversation)
+                // Only restart if: Mic is ON, AI is NOT speaking, AI is NOT thinking
+                if (micOnRef.current && !isSpeakingRef.current && !isProcessingRef.current && !isGeneratingFeedbackRef.current) {
+                    // Small delay to prevent CPU spinning
+                    setTimeout(() => startListening(), 400);
                 }
             };
 
-            const watchdog = setInterval(() => {
-                if (hasStartedRef.current && micOnRef.current && !isSpeakingRef.current && !isProcessingRef.current && !isGeneratingFeedbackRef.current) {
-                    startListening();
-                }
-            }, 5000);
+            // Start immediately
+            startListening();
 
             return () => {
                 if (recognitionRef.current) recognitionRef.current.abort();
                 clearTimeout(silenceTimer.current);
-                clearInterval(watchdog);
             };
         }
     }, [startListening, stopAndSubmit]);
@@ -460,13 +503,14 @@ export default function InterviewPage() {
     };
 
     return (
-        <div className="flex flex-col h-screen bg-neutral-950 text-white">
+        <div className="flex flex-col h-[100dvh] bg-neutral-950 text-white">
             {/* Video Area */}
-            <div className={`flex-1 flex max-h-[85vh] p-4 gap-4 transition-all duration-500 ${isCodingMode ? 'flex-row' : 'items-center justify-center'}`}>
+            <div className={`flex-1 flex md:max-h-[85vh] transition-all duration-500 
+                ${isCodingMode ? 'flex-col md:flex-row p-4 gap-4' : 'flex-col md:flex-row items-center justify-center p-0 md:p-4 md:gap-4'}`}>
 
                 {/* Main Content Area: Either Video (when not coding) or Code Editor (when coding) */}
-                <div className={`relative bg-neutral-900 rounded-2xl overflow-hidden shadow-2xl border border-neutral-800 transition-all duration-500 
-                    ${isCodingMode ? 'w-2/3 order-2' : 'w-full max-w-4xl aspect-video order-1'}`}>
+                <div className={`relative bg-neutral-900 overflow-hidden shadow-2xl transition-all duration-500 
+                    ${isCodingMode ? 'w-full md:w-2/3 order-2 rounded-2xl border border-neutral-800' : 'w-full md:max-w-4xl h-full md:h-auto md:aspect-video order-1 rounded-none md:rounded-2xl md:border border-neutral-800'}`}>
 
                     {isCodingMode ? (
                         // CODING ENVIRONMENT
@@ -544,6 +588,7 @@ export default function InterviewPage() {
                                     playsInline
                                     onEnded={handleVideoEnded}
                                     className="w-full h-full object-cover transition-opacity duration-300"
+                                    style={{ objectPosition: 'center' }}
                                 />
                             )}
                         </div>
@@ -551,17 +596,17 @@ export default function InterviewPage() {
 
                     {/* Transcripts & Overlays (Only show in Video Mode) */}
                     {!isCodingMode && (
-                        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 w-full max-w-2xl text-center pointer-events-none z-20">
+                        <div className="absolute bottom-16 md:bottom-8 left-1/2 -translate-x-1/2 w-full max-w-2xl text-center pointer-events-none z-20 px-4">
                             {isRecording && (
-                                <div className="inline-flex items-center gap-3 bg-black/60 backdrop-blur-md px-6 py-3 rounded-2xl text-lg font-medium text-white shadow-2xl border border-white/10 animate-in fade-in slide-in-from-bottom-4">
-                                    <span className="w-2 h-2 bg-red-500 rounded-full animate-ping" />
-                                    <span className="text-neutral-200">{transcript || "Listening..."}</span>
+                                <div className="inline-flex items-center gap-3 bg-black/40 backdrop-blur-sm px-4 py-2 rounded-full text-base font-medium text-white/90 shadow-lg border border-white/5 animate-in fade-in slide-in-from-bottom-2">
+                                    <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                                    <span className="text-sm">{transcript || "Listening..."}</span>
                                 </div>
                             )}
                             {isProcessing && (
-                                <div className="inline-flex items-center gap-3 bg-black/60 backdrop-blur-md px-6 py-3 rounded-2xl text-lg font-medium text-white shadow-2xl border border-white/10 animate-in fade-in slide-in-from-bottom-4">
+                                <div className="inline-flex items-center gap-3 bg-black/40 backdrop-blur-sm px-4 py-2 rounded-full text-base font-medium text-white/90 shadow-lg border border-white/5 animate-in fade-in slide-in-from-bottom-2">
                                     <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" />
-                                    <span className="text-neutral-200">Thinking...</span>
+                                    <span className="text-sm">Thinking...</span>
                                 </div>
                             )}
                             {error && !isRecording && (
@@ -575,7 +620,7 @@ export default function InterviewPage() {
 
                 {/* SIDEBAR (Visible only in Coding Mode) */}
                 {isCodingMode && (
-                    <div className="w-1/3 order-1 flex flex-col gap-4 animate-in slide-in-from-left-10 duration-500">
+                    <div className="w-full md:w-1/3 order-1 flex flex-col gap-4 animate-in slide-in-from-left-10 duration-500">
                         {/* AI Sidebar View ("Camera Off" static avatar as per request) */}
                         <div className="w-full aspect-video bg-neutral-900 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center">
                             <div className="flex flex-col items-center opacity-70">
@@ -597,13 +642,14 @@ export default function InterviewPage() {
                     </div>
                 )}
 
-                {/* User Video Overlay */}
+                {/* User Video Overlay - Fixed to Screen (Desktop: Bottom-Right, Mobile: Top-Right) */}
                 <motion.div
                     drag
-                    dragConstraints={{ left: -1000, right: 0, top: -1000, bottom: 0 }}
-                    whileHover={{ scale: 1.1, cursor: "grab" }}
-                    whileTap={{ scale: 1.05, cursor: "grabbing" }}
-                    className={`absolute bottom-4 right-4 w-32 md:w-48 aspect-video bg-black rounded-lg border border-neutral-700 overflow-hidden shadow-md z-30 ${isCodingMode ? 'opacity-50 hover:opacity-100' : ''}`}
+                    dragConstraints={{ left: -300, right: 0, top: 0, bottom: 300 }}
+                    whileHover={{ scale: 1.05 }}
+                    className={`fixed top-16 right-4 md:top-auto md:bottom-8 md:right-8 z-50
+                    w-28 md:w-64 aspect-video bg-black rounded-xl border border-white/10 overflow-hidden shadow-2xl 
+                    ${isCodingMode ? 'opacity-75 hover:opacity-100' : ''}`}
                 >
                     {cameraOn ? (
                         <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover transform scale-x-[-1]" />
@@ -612,13 +658,13 @@ export default function InterviewPage() {
                             <VideoOff className="w-6 h-6 text-muted-foreground" />
                         </div>
                     )}
-                    <div className="absolute bottom-1 left-2 text-[10px] font-medium text-white/50">YOU</div>
+                    <div className="absolute bottom-2 left-3 text-[10px] md:text-xs font-medium text-white/50 tracking-wider">YOU</div>
                 </motion.div>
 
             </div>
 
             {/* Controls */}
-            <div className="h-24 bg-neutral-950 border-t border-neutral-800/50 flex items-center justify-center gap-6 pb-4">
+            <div className="h-24 bg-neutral-950 border-t border-neutral-800/50 flex items-center justify-center gap-6 pb-4 z-50 relative">
                 <Button variant={micOn ? "secondary" : "destructive"} size="icon" className="rounded-full h-14 w-14 shadow-lg transition-transform hover:scale-105" onClick={toggleMic}>
                     {micOn ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
                 </Button>
@@ -639,7 +685,7 @@ export default function InterviewPage() {
                 {!hasStarted && messages.length === 1 ? (
                     <Button
                         size="lg"
-                        className="h-14 px-8 rounded-full text-lg font-semibold bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/20 shadow-xl transition-all hover:scale-105"
+                        className="h-16 px-10 rounded-full text-xl font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-[0_0_30px_-5px_rgba(59,130,246,0.5)] hover:shadow-[0_0_50px_-10px_rgba(59,130,246,0.8)] transition-all duration-300 transform hover:scale-105 active:scale-95 border border-white/10"
                         onClick={() => handleUserResponse(null)}
                     >
                         Start Interview
@@ -654,10 +700,13 @@ export default function InterviewPage() {
                             if (typeof window !== "undefined") {
                                 setIsGeneratingFeedback(true);
                                 try {
-                                    const historyStr = localStorage.getItem("interviewHistory");
-                                    const history = historyStr ? JSON.parse(historyStr) : [];
-                                    const contextStr = localStorage.getItem("interviewContext");
-                                    const context = contextStr ? JSON.parse(contextStr) : { targetCompany: "General" };
+                                    // DB-First: Use state, not localStorage
+                                    const history = [...contextState.interviewHistory];
+                                    const context = {
+                                        targetCompany: contextState.targetCompany,
+                                        jobDescription: contextState.jobDescription,
+                                        resume: contextState.resume
+                                    };
 
                                     const feedbackResponse = await fetch("/api/feedback", {
                                         method: "POST",
@@ -683,9 +732,8 @@ export default function InterviewPage() {
                                     };
 
                                     history.unshift(newSession);
-                                    localStorage.setItem("interviewHistory", JSON.stringify(history));
 
-                                    // Hybrid Sync: Save to MongoDB
+                                    // Save to MongoDB
                                     try {
                                         await fetch('/api/user/sync', {
                                             method: 'POST',
@@ -718,8 +766,8 @@ export default function InterviewPage() {
 
             {/* Conversation Captions (Subtitles logic) - Synced with Audio */}
             {isSpeaking && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant' && (
-                <div className="absolute bottom-32 left-0 right-0 text-center px-4 pointer-events-none z-30">
-                    <span className="inline-block bg-black/70 backdrop-blur-sm px-4 py-2 rounded-lg text-white/90 text-lg shadow-lg max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="absolute bottom-28 md:bottom-12 left-0 right-0 text-center px-6 pointer-events-none z-40">
+                    <span className="inline-block bg-black/50 backdrop-blur-sm px-4 py-3 rounded-2xl text-white/95 text-lg shadow-sm max-w-sm md:max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300 border border-white/5 leading-relaxed">
                         {messages[messages.length - 1].content}
                     </span>
                 </div>

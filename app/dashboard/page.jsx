@@ -109,8 +109,9 @@ export default function DashboardPage() {
             role: selectedRole || "General Role"
         };
 
-        // Remote Save (Async) - await to ensure save before navigation
+        // Save to DB
         await saveToRemote(contextData);
+
         router.push("/interview");
     };
 

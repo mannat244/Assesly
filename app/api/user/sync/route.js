@@ -19,6 +19,7 @@ export async function GET() {
     }
 
     return Response.json({
+        name: user.name,
         resume: user.resume,
         jobDescription: user.jobDescription,
         targetCompany: user.targetCompany,
