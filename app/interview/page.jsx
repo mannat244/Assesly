@@ -376,15 +376,31 @@ export default function InterviewPage() {
             recognitionRef.current.onresult = (event) => {
                 if (isSpeakingRef.current || isProcessingRef.current) return;
 
-                let final = "";
-                for (let i = event.resultIndex; i < event.results.length; ++i) {
-                    if (event.results[i].isFinal) final += event.results[i][0].transcript;
+                let finalTranscript = "";
+                let interimTranscript = "";
+
+                // Replaces the "append" logic with "rebuild" logic to fix Android duplication bugs
+                for (let i = 0; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
                 }
-                if (final) setTranscript(prev => (prev + " " + final).trim());
+
+                // Combine final and interim for real-time feedback
+                const currentText = (finalTranscript + " " + interimTranscript).trim();
+
+                // Only update if we have text. 
+                // Note: We deliberately overwrite 'transcript' completely instead of appending to 'prev'
+                // because event.results contains the entire session history until stop() is called.
+                if (currentText) {
+                    setTranscript(currentText);
+                }
 
                 clearTimeout(silenceTimer.current);
                 if (micOnRef.current && !isSpeakingRef.current && !isProcessingRef.current) {
-                    silenceTimer.current = setTimeout(() => stopAndSubmit(), 3000);
+                    silenceTimer.current = setTimeout(() => stopAndSubmit(), 3000); // 3s of silence = turn end
                 }
             };
 

@@ -35,57 +35,30 @@ export default function DashboardPage() {
         }
     }, [user, loading, router]);
 
-    // Hybrid Sync Logic - only run once when user is available
+    // DB Sync Logic - Fetch user data on mount
     useEffect(() => {
-        if (!user || dataLoaded.current) return; // Don't load data if not authenticated or already loaded
-        
+        if (!user || dataLoaded.current) return;
+
         dataLoaded.current = true;
-        
-        if (typeof window !== "undefined") {
 
-            // 1. Try Local Storage first (Speed)
-            const savedContext = localStorage.getItem("interviewContext");
-            let localDataFound = false;
-
-            if (savedContext) {
-                try {
-                    const parsed = JSON.parse(savedContext);
-                    if (parsed.resume || parsed.targetCompany) {
-                        setResumeText(parsed.resume || "");
-                        setCustomJD(parsed.jobDescription || "");
-                        if (parsed.targetCompany) setSelectedCompany(parsed.targetCompany);
-                        if (parsed.role) setSelectedRole(parsed.role);
-                        localDataFound = true;
-                    }
-                } catch (e) {
-                    console.error("Failed to parse saved context", e);
+        fetch('/api/user/sync')
+            .then(res => res.json())
+            .then(data => {
+                if (data.resume || data.targetCompany) {
+                    setResumeText(data.resume || "");
+                    setCustomJD(data.jobDescription || "");
+                    if (data.targetCompany) setSelectedCompany(data.targetCompany);
+                    if (data.role) setSelectedRole(data.role);
                 }
-            }
-
-            // 2. If no local data, fetch from MongoDB (Persistence/Fallback)
-            if (!localDataFound) {
-                fetch('/api/user/sync')
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data.resume || data.targetCompany) {
-                            setResumeText(data.resume || "");
-                            setCustomJD(data.jobDescription || "");
-                            if (data.targetCompany) setSelectedCompany(data.targetCompany);
-                            if (data.role) setSelectedRole(data.role);
-
-                            // Update local storage to match remote
-                            localStorage.setItem("interviewContext", JSON.stringify(data));
-                        }
-                    })
-                    .catch(err => console.error("Sync failed:", err));
-            }
-
-            // Load recent interviews (Local only for now, could be synced too)
-            const historyStr = localStorage.getItem("interviewHistory");
-            if (historyStr) {
-                try {
-                    const history = JSON.parse(historyStr);
+                if (data.interviewHistory && Array.isArray(data.interviewHistory)) {
+                    const history = data.interviewHistory;
+                    // history is stored in reverse chronological order usually, or we sort it?
+                    // Assuming API returns what we stored. 
+                    // Let's just trust the API returns the history array.
+                    // But wait, the stats logic was client side. 
+                    // We should recalculate stats here.
                     setRecentInterviews(history.slice(0, 3));
+
                     const total = history.length;
                     const avgScore = total > 0 ? Math.round(history.reduce((sum, i) => sum + (i.score || 0), 0) / total) : 0;
                     const lastWeek = history.filter(i => {
@@ -95,9 +68,9 @@ export default function DashboardPage() {
                         return date > weekAgo;
                     }).length;
                     setStats({ total, avgScore, lastWeek });
-                } catch (e) { console.error("Failed to parse history", e); }
-            }
-        }
+                }
+            })
+            .catch(err => console.error("Sync failed:", err));
     }, [user]);
 
     const companies = ["Google", "Microsoft", "Amazon", "Meta", "Netflix"];
@@ -115,7 +88,7 @@ export default function DashboardPage() {
         return "";
     };
 
-    // Save to DB (Debounced)
+    // Save to DB
     const saveToRemote = async (data) => {
         try {
             await fetch('/api/user/sync', {
@@ -128,7 +101,7 @@ export default function DashboardPage() {
         }
     };
 
-    const handleStartInterview = () => {
+    const handleStartInterview = async () => {
         const contextData = {
             resume: resumeText,
             jobDescription: getJobDescription(),
@@ -136,28 +109,25 @@ export default function DashboardPage() {
             role: selectedRole || "General Role"
         };
 
-        if (typeof window !== "undefined") {
-            // Local Save (Instant)
-            localStorage.setItem("interviewContext", JSON.stringify(contextData));
-            // Remote Save (Async)
-            saveToRemote(contextData);
-        }
+        // Remote Save (Async) - await to ensure save before navigation
+        await saveToRemote(contextData);
         router.push("/interview");
     };
 
-    const handleSaveResume = () => {
-        if (typeof window !== "undefined") {
-            const savedContext = localStorage.getItem("interviewContext");
-            let context = savedContext ? JSON.parse(savedContext) : {};
-            context.resume = resumeText;
+    const handleSaveResume = async () => {
+        const contextData = {
+            resume: resumeText,
+            // also preserve other fields so we don't overwrite them with null if the backend is doing a full replace
+            // actually the API endpoint is doing a partial update (User.findByIdAndUpdate), so we can just send what we want to update.
+            // But let's check api/user/sync
+        };
+        // Re-reading api/user/sync POST:
+        // if (data.resume !== undefined) updateData.resume = data.resume;
+        // So yes, we can just send the resume.
 
-            // Local Save
-            localStorage.setItem("interviewContext", JSON.stringify(context));
-            // Remote Save
-            saveToRemote(context);
+        await saveToRemote({ resume: resumeText });
 
-            setShowResumeEditor(false);
-        }
+        setShowResumeEditor(false);
     };
 
     const formatDate = (isoString) => {
