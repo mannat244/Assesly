@@ -28,6 +28,8 @@ export default function DashboardPage() {
     const [stats, setStats] = useState({ total: 0, avgScore: 0, lastWeek: 0 });
     const dataLoaded = useRef(false);
 
+    const [audioProvider, setAudioProvider] = useState("cartesia");
+
     // Authentication check
     useEffect(() => {
         if (!loading && !user) {
@@ -49,6 +51,12 @@ export default function DashboardPage() {
                     setCustomJD(data.jobDescription || "");
                     if (data.targetCompany) setSelectedCompany(data.targetCompany);
                     if (data.role) setSelectedRole(data.role);
+                }
+                if (data.preferences?.audioProvider) {
+                    setAudioProvider(data.preferences.audioProvider);
+                } else if (data.preferences?.usePremiumAudio) {
+                    // Backward compatible migration
+                    setAudioProvider(data.preferences.usePremiumAudio ? "elevenlabs" : "cartesia");
                 }
                 if (data.interviewHistory && Array.isArray(data.interviewHistory)) {
                     const history = data.interviewHistory;
@@ -99,6 +107,11 @@ export default function DashboardPage() {
         } catch (e) {
             console.error("Remote save failed", e);
         }
+    };
+
+    const handleTogglePremium = async (newValue) => {
+        setUsePremiumAudio(newValue);
+        await saveToRemote({ preferences: { usePremiumAudio: newValue } });
     };
 
     const handleStartInterview = async () => {
@@ -313,6 +326,31 @@ export default function DashboardPage() {
                                     </div>
                                 )}
 
+                                {/* Audio Configuration */}
+                                <div className="border border-white/10 rounded-lg p-4 bg-muted/20">
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div className="space-y-1">
+                                            <Label className="text-base font-medium">Voice Model</Label>
+                                            <p className="text-xs text-muted-foreground">
+                                                Select the AI voice provider for the interviewer.
+                                            </p>
+                                        </div>
+                                        <Select value={audioProvider} onValueChange={(val) => {
+                                            setAudioProvider(val);
+                                            saveToRemote({ preferences: { audioProvider: val } });
+                                        }}>
+                                            <SelectTrigger className="w-[180px]">
+                                                <SelectValue placeholder="Select Voice" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="cartesia">Cartesia (Default)</SelectItem>
+                                                <SelectItem value="deepgram">Deepgram (Fast)</SelectItem>
+                                                <SelectItem value="elevenlabs">ElevenLabs (Premium)</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+
                                 <Button
                                     size="lg"
                                     className="w-full"
@@ -368,6 +406,6 @@ export default function DashboardPage() {
                     </div>
                 </div>
             </div>
-        </div>
+        </div >
     );
 }

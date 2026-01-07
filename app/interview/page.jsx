@@ -23,6 +23,7 @@ export default function InterviewPage() {
     const [cameraOn, setCameraOn] = useState(true);
     const [messages, setMessages] = useState([]); // Initialized in useEffect
     const [contextState, setContextState] = useState({ targetCompany: "General", jobDescription: "", resume: "", interviewHistory: [] }); // DB-First Context
+    const [audioProvider, setAudioProvider] = useState("cartesia"); // Audio Preference
     const [isGeneratingFeedback, setIsGeneratingFeedback] = useState(false);
     const messagesRef = useRef([]); // Ref to hold latest messages for closures
 
@@ -44,7 +45,8 @@ export default function InterviewPage() {
     const [codeLanguage, setCodeLanguage] = useState("js");
     const [code, setCode] = useState(`function solution() {\n  // Write your code here\n  return;\n}`);
 
-    const recognitionRef = useRef(null);
+    const recognitionRef = useRef(null); // Keep for fallback
+    const audioPlayerRef = useRef(null); // Audio Player logic
     const videoRef = useRef(null);
     const aiVideoRef = useRef(null);
     const silenceTimer = useRef(null);
@@ -91,6 +93,12 @@ export default function InterviewPage() {
             // After 2 loops (~10-15s) of listening, simulate "Camera Off"
             if (newCount >= 2) {
                 setIsAiCamOff(true);
+            } else {
+                // Restart video for loop effect
+                if (aiVideoRef.current) {
+                    aiVideoRef.current.currentTime = 0;
+                    aiVideoRef.current.play().catch(() => { });
+                }
             }
         }
     };
@@ -169,7 +177,17 @@ export default function InterviewPage() {
                 messagesRef.current = initialMessages;
 
                 // Store context in state for Feedback generation and History updates
-                setContextState({ targetCompany, jobDescription, resume, interviewHistory: data.interviewHistory || [] });
+                setContextState({
+                    targetCompany,
+                    jobDescription,
+                    resume,
+                    interviewHistory: data.interviewHistory || [],
+                });
+                if (data.preferences?.audioProvider) {
+                    setAudioProvider(data.preferences.audioProvider);
+                } else if (data.preferences?.usePremiumAudio) {
+                    setAudioProvider(data.preferences.usePremiumAudio ? "elevenlabs" : "cartesia");
+                }
 
             } catch (error) {
                 console.error("Error fetching context:", error);
@@ -221,15 +239,15 @@ export default function InterviewPage() {
 
     // --- Stable Helper Functions ---
 
+
+
     const startListening = useCallback(() => {
-        // We use refs to check conditions without adding dependencies
-        if (recognitionRef.current && hasStartedRef.current && micOnRef.current && !isSpeakingRef.current && !isProcessingRef.current && !isRecordingRef.current) {
-            try {
-                recognitionRef.current.start();
-                setIsRecording(true);
-            } catch (e) {
-                // Already started or error
-            }
+        if (!micOnRef.current || isSpeakingRef.current || isProcessingRef.current || isRecordingRef.current) return;
+        setIsRecording(true);
+        try {
+            if (recognitionRef.current) recognitionRef.current.start();
+        } catch (e) {
+            // console.error("Speech Start Error:", e); 
         }
     }, []);
 
@@ -254,8 +272,15 @@ export default function InterviewPage() {
 
         while (attempt <= MAX_RETRIES && !audioUrl) {
             try {
-                // 1. Try ElevenLabs API
-                const response = await fetch("/api/tts", {
+                // Tiered Audio Architecture
+                let endpoint = "/api/cartesia"; // Default: Cartesia (Sonic-3)
+                if (audioProvider === "elevenlabs") {
+                    endpoint = "/api/tts"; // Premium: ElevenLabs
+                } else if (audioProvider === "deepgram") {
+                    endpoint = "/api/speak"; // Economy: Deepgram
+                }
+
+                const response = await fetch(endpoint, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ text: cleanText }),
@@ -281,7 +306,10 @@ export default function InterviewPage() {
 
         if (audioUrl) {
             // SUCCESS - Play Audio
+            if (audioPlayerRef.current) audioPlayerRef.current.pause();
             const audio = new Audio(audioUrl);
+            audioPlayerRef.current = audio;
+
             audio.onended = () => {
                 setIsSpeaking(false);
                 setTimeout(() => { if (micOnRef.current) startListening(); }, 500);
@@ -302,7 +330,7 @@ export default function InterviewPage() {
             console.warn("All TTS retries failed. Using Web Speech fallback.");
             fallbackToWebSpeech(cleanText);
         }
-    }, [startListening, isCodingMode]);
+    }, [startListening, isCodingMode, audioProvider]);
 
     const fallbackToWebSpeech = (text) => {
         if (typeof window !== "undefined" && window.speechSynthesis) {
@@ -384,6 +412,7 @@ export default function InterviewPage() {
 
     const stopAndSubmit = useCallback(() => {
         if (recognitionRef.current) recognitionRef.current.stop();
+
         const text = transcriptRef.current; // Use ref for latest transcript
         if (text && text.trim().length > 1 && !isSpeakingRef.current && !isProcessingRef.current) {
             handleUserResponse(text.trim());
@@ -448,7 +477,7 @@ export default function InterviewPage() {
 
                     silenceTimer.current = setTimeout(() => {
                         stopAndSubmit();
-                    }, 800);
+                    }, 2000);
                 }
             };
 
@@ -493,7 +522,23 @@ export default function InterviewPage() {
         };
     }, []);
 
-    const toggleMic = () => setMicOn(!micOn);
+    const toggleMic = useCallback(() => {
+        const newState = !micOn;
+        setMicOn(newState);
+        if (!newState) {
+            // Mic MUTED -> Stop everything
+            if (audioPlayerRef.current) {
+                audioPlayerRef.current.pause();
+                audioPlayerRef.current = null;
+            }
+            setIsSpeaking(false);
+            if (recognitionRef.current) recognitionRef.current.abort();
+        } else {
+            // Mic UNMUTED -> Start listening
+            setTimeout(() => startListening(), 100);
+        }
+    }, [micOn, startListening]);
+
     const toggleCam = () => setCameraOn(!cameraOn);
 
     const handleCodeSubmit = async () => {
@@ -603,12 +648,6 @@ export default function InterviewPage() {
                                     <span className="text-sm">{transcript || "Listening..."}</span>
                                 </div>
                             )}
-                            {isProcessing && (
-                                <div className="inline-flex items-center gap-3 bg-black/40 backdrop-blur-sm px-4 py-2 rounded-full text-base font-medium text-white/90 shadow-lg border border-white/5 animate-in fade-in slide-in-from-bottom-2">
-                                    <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" />
-                                    <span className="text-sm">Thinking...</span>
-                                </div>
-                            )}
                             {error && !isRecording && (
                                 <div className="inline-block bg-red-900/80 backdrop-blur-md px-6 py-3 rounded-full text-lg font-medium text-white shadow-lg mt-2">
                                     ⚠️ {error}
@@ -634,7 +673,7 @@ export default function InterviewPage() {
 
                         {/* Context/Prompt Area */}
                         <div className="flex-1 bg-neutral-900/50 rounded-xl p-4 border border-neutral-800/50 overflow-y-auto">
-                            <h4 className="text-sm font-seimbold text-indigo-400 mb-2">Instructions</h4>
+                            <h4 className="text-sm font-semibold text-indigo-400 mb-2">Instructions</h4>
                             <p className="text-sm text-neutral-400 leading-relaxed">
                                 {messages[messages.length - 1]?.role === 'assistant' ? messages[messages.length - 1].content : "Waiting for instructions..."}
                             </p>
@@ -647,7 +686,7 @@ export default function InterviewPage() {
                     drag
                     dragConstraints={{ left: -300, right: 0, top: 0, bottom: 300 }}
                     whileHover={{ scale: 1.05 }}
-                    className={`fixed top-16 right-4 md:top-auto md:bottom-8 md:right-8 z-50
+                    className={`fixed top-20 right-4 md:top-auto md:bottom-28 md:right-8 z-40
                     w-28 md:w-64 aspect-video bg-black rounded-xl border border-white/10 overflow-hidden shadow-2xl 
                     ${isCodingMode ? 'opacity-75 hover:opacity-100' : ''}`}
                 >
@@ -665,6 +704,7 @@ export default function InterviewPage() {
 
             {/* Controls */}
             <div className="h-24 bg-neutral-950 border-t border-neutral-800/50 flex items-center justify-center gap-6 pb-4 z-50 relative">
+                {/* ... (buttons kept same, just context) ... */}
                 <Button variant={micOn ? "secondary" : "destructive"} size="icon" className="rounded-full h-14 w-14 shadow-lg transition-transform hover:scale-105" onClick={toggleMic}>
                     {micOn ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
                 </Button>
@@ -766,8 +806,8 @@ export default function InterviewPage() {
 
             {/* Conversation Captions (Subtitles logic) - Synced with Audio */}
             {isSpeaking && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant' && (
-                <div className="absolute bottom-28 md:bottom-12 left-0 right-0 text-center px-6 pointer-events-none z-40">
-                    <span className="inline-block bg-black/50 backdrop-blur-sm px-4 py-3 rounded-2xl text-white/95 text-lg shadow-sm max-w-sm md:max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300 border border-white/5 leading-relaxed">
+                <div className="absolute bottom-32 md:bottom-36 left-0 right-0 text-center px-6 pointer-events-none z-30">
+                    <span className="inline-block bg-black/60 backdrop-blur-md px-6 py-4 rounded-3xl text-white/95 text-lg md:text-xl font-medium shadow-2xl border border-white/10 leading-relaxed tracking-wide">
                         {messages[messages.length - 1].content}
                     </span>
                 </div>

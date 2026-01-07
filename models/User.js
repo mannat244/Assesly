@@ -22,6 +22,10 @@ const UserSchema = new mongoose.Schema({
     targetCompany: { type: String, default: '' },
     role: { type: String, default: '' },
     interviewHistory: { type: [mongoose.Schema.Types.Mixed], default: [] }, // Flexible array for history
+    preferences: {
+        usePremiumAudio: { type: Boolean, default: false }, // Deprecated in favor of audioProvider
+        audioProvider: { type: String, default: 'cartesia', enum: ['cartesia', 'deepgram', 'elevenlabs'] }
+    },
 }, {
     timestamps: true,
 });

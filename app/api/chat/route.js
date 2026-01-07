@@ -18,7 +18,7 @@ export async function POST(req) {
             messages: messages,
             model: "openai/gpt-oss-120b", // As requested by user
             temperature: 0.1,
-            max_completion_tokens: 1024,
+            max_completion_tokens: 500,
             top_p: 1,
             stream: true,
             stop: null,

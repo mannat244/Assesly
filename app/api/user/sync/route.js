@@ -25,6 +25,7 @@ export async function GET() {
         targetCompany: user.targetCompany,
         role: user.role,
         interviewHistory: user.interviewHistory || [],
+        preferences: { usePremiumAudio: false },
     });
 }
 
@@ -44,6 +45,7 @@ export async function POST(request) {
     if (data.targetCompany !== undefined) updateData.targetCompany = data.targetCompany;
     if (data.role !== undefined) updateData.role = data.role;
     if (data.interviewHistory !== undefined) updateData.interviewHistory = data.interviewHistory;
+    if (data.preferences !== undefined) updateData.preferences = data.preferences;
 
     await User.findByIdAndUpdate(session.user.id, updateData);
 
