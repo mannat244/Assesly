@@ -15,18 +15,17 @@ export default function InterviewReportPage() {
     const [session, setSession] = useState(null);
 
     useEffect(() => {
-        if (typeof window !== "undefined" && id) {
-            const data = localStorage.getItem("interviewHistory");
-            if (data) {
-                try {
-                    const history = JSON.parse(data);
-                    const found = history.find(s => s.id === id);
+        if (!id) return;
+
+        fetch('/api/user/sync')
+            .then(res => res.json())
+            .then(data => {
+                if (data.interviewHistory && Array.isArray(data.interviewHistory)) {
+                    const found = data.interviewHistory.find(s => s.id === id);
                     setSession(found);
-                } catch (e) {
-                    console.error("Failed to parse history", e);
                 }
-            }
-        }
+            })
+            .catch(err => console.error("Failed to load session:", err));
     }, [id]);
 
     if (!session) {

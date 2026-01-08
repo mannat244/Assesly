@@ -11,17 +11,32 @@ import { Calendar, ChevronRight, Trophy } from "lucide-react";
 export default function HistoryPage() {
     const [history, setHistory] = useState([]);
 
+    const [error, setError] = useState(null);
+
     useEffect(() => {
-        if (typeof window !== "undefined") {
-            const data = localStorage.getItem("interviewHistory");
-            if (data) {
-                try {
-                    setHistory(JSON.parse(data));
-                } catch (e) {
-                    console.error("Failed to parse history", e);
+        const fetchHistory = async () => {
+            try {
+                const res = await fetch('/api/user/sync');
+                if (res.status === 401) {
+                    window.location.href = '/login'; // Force redirect using window location for safety
+                    return;
                 }
+
+                if (!res.ok) {
+                    throw new Error(`Failed to fetch history: ${res.statusText}`);
+                }
+
+                const data = await res.json();
+                if (data.interviewHistory && Array.isArray(data.interviewHistory)) {
+                    setHistory(data.interviewHistory);
+                }
+            } catch (err) {
+                console.error("Failed to load history:", err);
+                setError("Unable to load interview history. Please try refreshing again.");
             }
-        }
+        };
+
+        fetchHistory();
     }, []);
 
     const formatDate = (isoString) => {
@@ -42,7 +57,14 @@ export default function HistoryPage() {
                     <h2 className="text-3xl font-bold tracking-tight">Interview History</h2>
                 </div>
 
-                {history.length === 0 ? (
+                {error ? (
+                    <div className="p-4 rounded-md bg-destructive/15 text-destructive border border-destructive/20">
+                        {error}
+                        <Button variant="outline" size="sm" className="ml-4" onClick={() => window.location.reload()}>
+                            Retry
+                        </Button>
+                    </div>
+                ) : history.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-[400px] border border-dashed rounded-lg bg-muted/40">
                         <p className="text-muted-foreground mb-4">No interviews completed yet.</p>
                         <Link href="/dashboard">

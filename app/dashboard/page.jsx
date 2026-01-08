@@ -10,10 +10,11 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { BarChart3, Clock, TrendingUp, ArrowRight, Briefcase, FileText, Edit } from "lucide-react";
+import { BarChart3, Clock, TrendingUp, ArrowRight, Briefcase, FileText, Edit, Sparkles, Building2, MapPin, ExternalLink } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import jobDescriptions from "@/lib/jobDescriptions.json";
 import { useAuth } from "@/context/AuthContext";
+import JobCard from "@/components/jobs/JobCard";
 
 export default function DashboardPage() {
     const router = useRouter();
@@ -29,6 +30,7 @@ export default function DashboardPage() {
     const dataLoaded = useRef(false);
 
     const [audioProvider, setAudioProvider] = useState("cartesia");
+    const [featuredJobs, setFeaturedJobs] = useState([]);
 
     // Authentication check
     useEffect(() => {
@@ -80,6 +82,22 @@ export default function DashboardPage() {
             })
             .catch(err => console.error("Sync failed:", err));
     }, [user]);
+
+    // Fetch Featured Jobs from India
+    useEffect(() => {
+        async function fetchJobs() {
+            try {
+                const response = await fetch('/api/jobs/search?query=developer&country=in&page=1');
+                const res = await response.json();
+                if (res.success && res.data) {
+                    setFeaturedJobs(res.data.slice(0, 4)); // Get top 4 jobs
+                }
+            } catch (err) {
+                console.error("Failed to fetch jobs:", err);
+            }
+        }
+        fetchJobs();
+    }, []);
 
     const companies = ["Google", "Microsoft", "Amazon", "Meta", "Netflix"];
 
@@ -174,15 +192,64 @@ export default function DashboardPage() {
     return (
         <div className="flex min-h-screen flex-col">
             <DashboardNav />
-            <div className="flex-1 space-y-6 p-4 md:p-8 pt-6">
-                {/* Header */}
-                <div className="flex items-center justify-between">
-                    <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
-                    <Button variant="outline" size="sm" onClick={() => setShowResumeEditor(!showResumeEditor)}>
-                        <Edit className="mr-2 h-4 w-4" />
-                        {showResumeEditor ? "Hide" : "Edit"} Resume
-                    </Button>
+            <div className="flex-1 space-y-8 p-4 md:p-8 pt-6">
+                {/* Hero Section */}
+                <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary/10 via-primary/5 to-background border border-primary/20 p-8 md:p-12">
+                    <div className="relative z-10">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Sparkles className="h-5 w-5 text-primary" />
+                            <span className="text-sm font-medium text-primary">Welcome to Assessly</span>
+                        </div>
+                        <h1 className="text-3xl md:text-4xl font-bold mb-3">
+                            Ready to ace your next interview?
+                        </h1>
+                        <p className="text-muted-foreground text-lg mb-6 max-w-2xl">
+                            Practice with AI-powered interviews, explore opportunities, and track your progress—all in one place.
+                        </p>
+                        <div className="flex flex-wrap gap-3">
+                            <Button size="lg" variant="outline" onClick={() => router.push('/dashboard/jobs')} className="gap-2">
+                                <Building2 className="h-4 w-4" />
+                                Browse Jobs
+                            </Button>
+                            <Button size="lg" variant="ghost" onClick={() => setShowResumeEditor(!showResumeEditor)} className="gap-2">
+                                <Edit className="h-4 w-4" />
+                                {showResumeEditor ? "Hide" : "Edit"} Resume
+                            </Button>
+                        </div>
+                        <div className="mt-8 flex items-center gap-2 text-sm text-muted-foreground animate-bounce">
+                            <ArrowRight className="h-4 w-4 rotate-90" />
+                            <span>Scroll down to start practicing</span>
+                        </div>
+                    </div>
                 </div>
+
+                {/* Featured Jobs Section */}
+                {featuredJobs.length > 0 && (
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                                    <Building2 className="h-6 w-6 text-primary" />
+                                    Featured Opportunities in India
+                                </h2>
+                                <p className="text-muted-foreground text-sm mt-1">
+                                    Top roles matching your profile
+                                </p>
+                            </div>
+                            <Link href="/dashboard/jobs">
+                                <Button variant="ghost" size="sm" className="gap-1">
+                                    View All <ArrowRight className="h-4 w-4" />
+                                </Button>
+                            </Link>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {featuredJobs.map((job, idx) => (
+                                <JobCard key={job.job_id || idx} job={job} index={idx} />
+                            ))}
+                        </div>
+                    </div>
+                )}
+
 
                 {/* Resume Editor (Collapsible) */}
                 {showResumeEditor && (
@@ -207,7 +274,7 @@ export default function DashboardPage() {
                 )}
 
                 {/* Stats Cards */}
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid grid-cols-3 gap-4 md:grid-cols-3">
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                             <CardTitle className="text-sm font-medium">Total Interviews</CardTitle>
@@ -250,107 +317,132 @@ export default function DashboardPage() {
                                     Select company, role, and choose a job description template or use your own
                                 </CardDescription>
                             </CardHeader>
-                            <CardContent className="space-y-4">
-                                {/* Company Selection */}
-                                <div className="space-y-2">
-                                    <Label>Target Company</Label>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                        {companies.map((company) => (
-                                            <Button
-                                                key={company}
-                                                variant={selectedCompany === company ? "default" : "outline"}
-                                                className="h-auto py-3"
-                                                onClick={() => {
-                                                    setSelectedCompany(company);
-                                                    setSelectedRole(null);
-                                                }}
-                                            >
-                                                {company}
-                                            </Button>
-                                        ))}
+                            <CardContent className="space-y-6">
+                                {/* Step 1: Company & Role Selection */}
+                                <div className="space-y-4">
+                                    <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">1</div>
+                                        <span>Choose Your Target</span>
                                     </div>
-                                </div>
 
-                                {/* Role Selection */}
-                                {selectedCompany && (
-                                    <div className="space-y-2">
-                                        <Label>Select Role</Label>
-                                        <Select value={selectedRole || ""} onValueChange={setSelectedRole}>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Choose a role..." />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {getRolesForCompany(selectedCompany).map((role) => (
-                                                    <SelectItem key={role} value={role}>
-                                                        {role}
-                                                    </SelectItem>
+                                    <div className="space-y-3 pl-8">
+                                        <div className="space-y-2">
+                                            <Label className="text-sm">Company</Label>
+                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                                {companies.map((company) => (
+                                                    <Button
+                                                        key={company}
+                                                        variant={selectedCompany === company ? "default" : "outline"}
+                                                        className="h-auto py-2.5 text-sm"
+                                                        onClick={() => {
+                                                            setSelectedCompany(company);
+                                                            setSelectedRole(null);
+                                                        }}
+                                                    >
+                                                        {company}
+                                                    </Button>
                                                 ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                )}
-
-                                {/* JD Option Toggle */}
-                                {selectedRole && (
-                                    <div className="space-y-3">
-                                        <div className="flex items-center gap-4">
-                                            <Button
-                                                variant={!useCustomJD ? "default" : "outline"}
-                                                size="sm"
-                                                onClick={() => setUseCustomJD(false)}
-                                            >
-                                                Use Template JD
-                                            </Button>
-                                            <Button
-                                                variant={useCustomJD ? "default" : "outline"}
-                                                size="sm"
-                                                onClick={() => setUseCustomJD(true)}
-                                            >
-                                                Custom JD
-                                            </Button>
+                                            </div>
                                         </div>
 
-                                        {useCustomJD ? (
-                                            <Textarea
-                                                placeholder="Paste your custom job description..."
-                                                className="min-h-[100px]"
-                                                value={customJD}
-                                                onChange={(e) => setCustomJD(e.target.value)}
-                                            />
-                                        ) : (
-                                            <div className="rounded-lg border bg-muted/50 p-4 text-sm">
-                                                <p className="font-medium mb-2">Template JD Preview:</p>
-                                                <p className="text-muted-foreground line-clamp-3">{currentJD}</p>
+                                        {selectedCompany && (
+                                            <div className="space-y-2">
+                                                <Label className="text-sm">Role</Label>
+                                                <Select value={selectedRole || ""} onValueChange={setSelectedRole}>
+                                                    <SelectTrigger>
+                                                        <SelectValue placeholder="Choose a role..." />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {getRolesForCompany(selectedCompany).map((role) => (
+                                                            <SelectItem key={role} value={role}>
+                                                                {role}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
                                             </div>
                                         )}
                                     </div>
+                                </div>
+
+                                {/* Step 2: Job Description */}
+                                {selectedRole && (
+                                    <div className="space-y-4">
+                                        <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                                            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">2</div>
+                                            <span>Job Description</span>
+                                        </div>
+
+                                        <div className="space-y-3 pl-8">
+                                            <div className="flex items-center gap-2">
+                                                <Button
+                                                    variant={!useCustomJD ? "default" : "outline"}
+                                                    size="sm"
+                                                    onClick={() => setUseCustomJD(false)}
+                                                >
+                                                    Use Template
+                                                </Button>
+                                                <Button
+                                                    variant={useCustomJD ? "default" : "outline"}
+                                                    size="sm"
+                                                    onClick={() => setUseCustomJD(true)}
+                                                >
+                                                    Custom JD
+                                                </Button>
+                                            </div>
+
+                                            {useCustomJD ? (
+                                                <Textarea
+                                                    placeholder="Paste your custom job description..."
+                                                    className="min-h-[120px]"
+                                                    value={customJD}
+                                                    onChange={(e) => setCustomJD(e.target.value)}
+                                                />
+                                            ) : (
+                                                <div className="rounded-lg border bg-muted/50 p-3 text-sm">
+                                                    <p className="font-medium mb-1.5 text-xs text-muted-foreground">Template Preview:</p>
+                                                    <p className="text-foreground/80 line-clamp-3 text-xs leading-relaxed">{currentJD}</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
                                 )}
 
-                                {/* Audio Configuration */}
-                                <div className="border border-white/10 rounded-lg p-4 bg-muted/20">
-                                    <div className="flex items-center justify-between gap-4">
-                                        <div className="space-y-1">
-                                            <Label className="text-base font-medium">Voice Model</Label>
-                                            <p className="text-xs text-muted-foreground">
-                                                Select the AI voice provider for the interviewer.
-                                            </p>
+                                {/* Step 3: Voice Configuration */}
+                                <div className="space-y-4">
+                                    <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">3</div>
+                                        <span>Voice Settings</span>
+                                    </div>
+
+                                    <div className="pl-8">
+                                        <div className="rounded-lg border bg-muted/30 p-4">
+                                            <div className="flex items-center justify-between gap-4">
+                                                <div className="space-y-0.5">
+                                                    <Label className="text-sm font-medium">AI Interviewer Voice</Label>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        Choose your preferred voice model
+                                                    </p>
+                                                </div>
+                                                <Select value={audioProvider} onValueChange={(val) => {
+                                                    setAudioProvider(val);
+                                                    saveToRemote({ preferences: { audioProvider: val } });
+                                                }}>
+                                                    <SelectTrigger className="w-[160px]">
+                                                        <SelectValue placeholder="Select Voice" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="cartesia">Cartesia</SelectItem>
+                                                        <SelectItem value="deepgram">Deepgram</SelectItem>
+                                                        <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
                                         </div>
-                                        <Select value={audioProvider} onValueChange={(val) => {
-                                            setAudioProvider(val);
-                                            saveToRemote({ preferences: { audioProvider: val } });
-                                        }}>
-                                            <SelectTrigger className="w-[180px]">
-                                                <SelectValue placeholder="Select Voice" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="cartesia">Cartesia (Default)</SelectItem>
-                                                <SelectItem value="deepgram">Deepgram (Fast)</SelectItem>
-                                                <SelectItem value="elevenlabs">ElevenLabs (Premium)</SelectItem>
-                                            </SelectContent>
-                                        </Select>
                                     </div>
                                 </div>
 
+                                {/* Start Button */}
                                 <Button
                                     size="lg"
                                     className="w-full"
@@ -377,25 +469,34 @@ export default function DashboardPage() {
                                     </Link>
                                 </div>
                             </CardHeader>
-                            <CardContent className="space-y-3">
+                            <CardContent className="space-y-4">
                                 {recentInterviews.length === 0 ? (
-                                    <p className="text-sm text-muted-foreground text-center py-4">
+                                    <p className="text-sm text-muted-foreground text-center py-8">
                                         No interviews yet. Start your first one!
                                     </p>
                                 ) : (
                                     recentInterviews.map((interview) => (
-                                        <Link key={interview.id} href={`/dashboard/history/${interview.id}`}>
-                                            <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
-                                                <CardContent className="p-4">
-                                                    <div className="flex items-start justify-between mb-2">
-                                                        <div className="font-medium text-sm">{interview.company}</div>
-                                                        <Badge variant={interview.score >= 80 ? "default" : "secondary"} className="text-xs">
+                                        <Link className="flex flex-col" key={interview.id} href={`/dashboard/history/${interview.id}`}>
+                                            <Card className="hover:bg-muted/50 transition-colors cursor-pointer border-l-4 border-l-primary/20 hover:border-l-primary">
+                                                <CardContent className="p-2">
+                                                    <div className="flex  items-center justify-between gap-4">
+                                                        <div className="flex-1 min-w-0 space-y-2">
+                                                            <div className="flex items-center gap-2">
+                                                                <Building2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                                                                <p className="font-medium text-sm truncate">{interview.company}</p>
+                                                            </div>
+                                                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                                <Clock className="h-3 w-3 flex-shrink-0" />
+                                                                <span>{formatDate(interview.date)}</span>
+                                                            </div>
+                                                        </div>
+                                                        <Badge
+                                                            variant={interview.score >= 80 ? "default" : "secondary"}
+                                                            className="text-sm font-bold px-3 py-1.5 flex-shrink-0"
+                                                        >
                                                             {interview.score}
                                                         </Badge>
                                                     </div>
-                                                    <p className="text-xs text-muted-foreground">
-                                                        {formatDate(interview.date)}
-                                                    </p>
                                                 </CardContent>
                                             </Card>
                                         </Link>

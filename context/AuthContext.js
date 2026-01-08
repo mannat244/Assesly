@@ -3,7 +3,13 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-const AuthContext = createContext();
+const AuthContext = createContext({
+    user: null,
+    loading: true,
+    login: async () => ({ success: false, error: 'Auth not initialized' }),
+    signup: async () => ({ success: false, error: 'Auth not initialized' }),
+    logout: async () => { },
+});
 
 // Helper functions for localStorage operations
 const saveUserToLocalStorage = (userData) => {
@@ -19,24 +25,40 @@ const clearUserFromLocalStorage = () => {
 };
 
 export function AuthProvider({ children }) {
+    // Initialize user as null to ensure server/client match (Fixes Hydration Error)
     const [user, setUser] = useState(null);
-    // Default to true so we don't flash login screen while checking session
     const [loading, setLoading] = useState(true);
     const router = useRouter();
 
-    // effective check for session persistence
     useEffect(() => {
+        // 1. Optimistic Check from LocalStorage (Client-side only)
+        if (typeof window !== 'undefined') {
+            try {
+                const stored = localStorage.getItem('user');
+                if (stored) {
+                    setUser(JSON.parse(stored));
+                }
+            } catch (e) {
+                console.error("Failed to parse user from local storage", e);
+            }
+        }
+
+        // 2. Authoritative Check from Server
         async function checkUser() {
             try {
                 const res = await fetch('/api/auth/me');
                 if (res.ok) {
                     const data = await res.json();
                     if (data.isLoggedIn) {
-                        setUser(data);
+                        setUser(data); // Sync with server truth
                         saveUserToLocalStorage(data);
                     } else {
-                        setUser(null);
-                        clearUserFromLocalStorage();
+                        // Server says not logged in
+                        if (localStorage.getItem('user')) {
+                            // Only clear if we actually had something, to avoid unnecessary state updates
+                            setUser(null);
+                            clearUserFromLocalStorage();
+                        }
                     }
                 }
             } catch (error) {

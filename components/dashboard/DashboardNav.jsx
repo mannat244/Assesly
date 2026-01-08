@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -24,6 +26,9 @@ export default function DashboardNav() {
                 <div className="ml-6 flex items-center space-x-6">
                     <Link href="/dashboard" className="text-sm font-medium transition-colors hover:text-primary">
                         Dashboard
+                    </Link>
+                    <Link href="/dashboard/jobs" className="text-sm font-medium transition-colors hover:text-primary">
+                        Jobs
                     </Link>
                     <Link href="/dashboard/history" className="text-sm font-medium transition-colors hover:text-primary">
                         History

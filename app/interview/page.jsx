@@ -44,6 +44,11 @@ export default function InterviewPage() {
     const [isCodingMode, setIsCodingMode] = useState(false);
     const [codeLanguage, setCodeLanguage] = useState("js");
     const [code, setCode] = useState(`function solution() {\n  // Write your code here\n  return;\n}`);
+    const [showCodeTooltip, setShowCodeTooltip] = useState(false);
+    const [problemDetails, setProblemDetails] = useState(null); // Structured problem data
+    const [timeComplexity, setTimeComplexity] = useState("");
+    const [spaceComplexity, setSpaceComplexity] = useState("");
+    const [codeExplanation, setCodeExplanation] = useState("");
 
     const recognitionRef = useRef(null); // Keep for fallback
     const audioPlayerRef = useRef(null); // Audio Player logic
@@ -51,9 +56,52 @@ export default function InterviewPage() {
     const aiVideoRef = useRef(null);
     const silenceTimer = useRef(null);
     const transcriptRef = useRef(""); // Ref to hold latest transcript for closures
+    const accumulatedTranscriptRef = useRef(""); // Ref to hold transcript across mic restarts
 
     // Sync transcript state to ref
     useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
+
+    const cleanupMedia = useCallback(() => {
+        // Stop Speech Recognition
+        if (recognitionRef.current) {
+            recognitionRef.current.onend = null; // Prevent restart loops
+            recognitionRef.current.abort();
+        }
+
+        // Stop Audio Playback
+        if (audioPlayerRef.current) {
+            audioPlayerRef.current.pause();
+            audioPlayerRef.current.currentTime = 0;
+            audioPlayerRef.current = null;
+        }
+
+        // Stop TTS Fallback
+        if (typeof window !== "undefined" && window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+        }
+
+        // Clear Timers
+        if (silenceTimer.current) clearTimeout(silenceTimer.current);
+
+        // Reset States
+        setIsSpeaking(false);
+        setIsRecording(false);
+    }, []);
+
+    // Handle Tab Visibility (Stop audio if user leaves tab)
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.hidden) {
+                cleanupMedia();
+                setMicOn(false); // UI Sync
+            }
+        };
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        return () => {
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
+            cleanupMedia(); // Cleanup on unmount
+        };
+    }, [cleanupMedia]);
 
     // Handle AI Video State
     const [videoLoopCount, setVideoLoopCount] = useState(0);
@@ -122,6 +170,13 @@ export default function InterviewPage() {
                 const jobDescription = data.jobDescription || "Software Engineer";
                 const resume = data.resume || "Not provided";
 
+                // SET AUDIO PROVIDER based on preferences
+                if (data.preferences?.usePremiumAudio) {
+                    setAudioProvider("elevenlabs");
+                } else {
+                    setAudioProvider("cartesia");
+                }
+
                 // Save critical context for feedback/history later if needed (though history uses DB now too)
                 // We can keep a minimal local context state if needed, or just rely on the conversation
                 // For now, we mainly need to set the system prompt.
@@ -139,37 +194,67 @@ export default function InterviewPage() {
                 const systemPrompt = `
                 You are Sneha, a Senior Software Engineer and interviewer at ${targetCompany}.
 
-                You are calm, precise, and professional. You are not hostile and not friendly.
+                You are calm, precise, and professional.You are not hostile and not friendly.
                 Your goal is to evaluate how the candidate thinks, not to intimidate them.
 
-                CONTEXT:
-                Candidate Name: ${userName}
+        CONTEXT:
+        Candidate Name: ${userName}
                 Target Company: ${targetCompany}
                 Job Description: ${jobDescription}
                 Candidate Resume: ${resume}
 
                 INTERVIEW STYLE:
-                - Speak like a real interviewer in a live video interview.
-                - Short, clear sentences. **Max 2-3 sentences per turn.**
-                - **NO numbered lists (1., 2., etc.)**. NO bullet points.
-                - **NO markdown formatting** (bold, italics).
-                - Conversational and natural. Do not lecture.
+        - Speak like a real interviewer in a live video interview.
+                - Short, clear sentences. ** Max 2 - 3 sentences per turn.**
+                - ** NO numbered lists(1., 2., etc.) **.NO bullet points.
+                - ** NO markdown formatting ** (bold, italics).
+                - Conversational and natural.Do not lecture.
                 - No exaggerated praise or fake enthusiasm.
                 - You may acknowledge answers briefly with phrases like "Okay", "I see", or "Got it".
 
                 INTERVIEW RULES:
-                1. **PHASE 1: INTRODUCTION**: Start by greeting the candidate by name (${userName}). Ask them to briefly introduce themselves or walk you through their resume.
-                2. **PHASE 2: PROJECT DEEP DIVE**: Pick a specific project from their resume (or ask about one if missing).
+    1. ** PHASE 1: INTRODUCTION **: Start by greeting the candidate by name(${userName}).Ask them to briefly introduce themselves or walk you through their resume.
+                2. ** PHASE 2: PROJECT DEEP DIVE **: Pick a specific project from their resume(or ask about one if missing).
                    - Ask: "How did you implement [feature]?" or "Tell me about the architecture of [Project X]."
-                   - Dig into specific technical decisions (DB choice, API design, challenges).
-                   - DO NOT ask generic "What is React?" questions. Ask "How did YOU use React in this project?"
-                3. **PHASE 3: PROBLEM SOLVING**: Only after discussing projects, move to hypothetical system design or coding challenges related to the job description.
-                4. **General Rules**:
-                   - Ask ONE clear question at a time.
+        - Dig into specific technical decisions(DB choice, API design, challenges).
+                   - DO NOT ask generic "What is React?" questions.Ask "How did YOU use React in this project?"
+    3. ** PHASE 3: PROBLEM SOLVING **: Only after discussing projects, move to hypothetical system design or coding challenges related to the job description.
+                4. ** General Rules **:
+    - Ask ONE clear question at a time.
                    - Keep it conversational.
-                   - If they mention a technology, ask *why* they used it.
+                   - If they mention a technology, ask * why * they used it.
 
                 Your goal is to decide whether this candidate can be trusted to work on real production systems.
+
+        IMPORTANT: When you decide to ask a CODING QUESTION:
+                1. Start your response with [CODE_MODE].
+                2. Then, speak naturally to the candidate introducing the problem.
+                3. AFTER your spoken text, append a Structured JSON block with the tag [PROBLEM_DETAILS].
+                4. Personalize the problem based on their resume if possible.
+
+                Format for Coding Questions:
+                [CODE_MODE]
+                (Spoken text: "Okay ${userName}, since you know DSA, let's try ...")
+                [PROBLEM_DETAILS]
+                {
+                  "title": "Short Title",
+                  "description": "Concise formatted description. No newlines in strings.",
+                  "examples": [
+                    { "input": "...", "output": "..." }
+                  ]
+                }
+                [/PROBLEM_DETAILS]
+
+                CRITICAL JSON RULES:
+                - Do NOT use real newlines inside the JSON string values. Use \\n instead.
+                - Ensure the JSON is valid and parsable.
+                - Keep the description clear but compact.
+
+                QUESTION STYLE GUIDE:
+                - ASK LANGUAGE AGNOSTIC QUESTIONS (LeetCode Style).
+                - Focus on Algorithms, Data Structures, or Class Design (e.g. "Design a QueryCache class").
+                - Do NOT ask language-specific syntax trivia (unavailable methods, etc.).
+                - Provide clear input/output examples.
                 `;
 
                 const initialMessages = [{ role: "system", content: systemPrompt }];
@@ -259,7 +344,7 @@ export default function InterviewPage() {
             .replace(/\n/g, ". ");
     };
 
-    const speak = useCallback(async (text) => {
+    const speak = useCallback(async (text, onPlay = null) => {
         setIsProcessing(true);
         if (recognitionRef.current) recognitionRef.current.stop();
 
@@ -273,6 +358,7 @@ export default function InterviewPage() {
         while (attempt <= MAX_RETRIES && !audioUrl) {
             try {
                 // Tiered Audio Architecture
+                console.log("🎙️ Current Voice Model:", audioProvider);
                 let endpoint = "/api/cartesia"; // Default: Cartesia (Sonic-3)
                 if (audioProvider === "elevenlabs") {
                     endpoint = "/api/tts"; // Premium: ElevenLabs
@@ -292,7 +378,13 @@ export default function InterviewPage() {
                 }
 
                 const audioBlob = await response.blob();
-                audioUrl = URL.createObjectURL(audioBlob);
+
+                // Explicitly set MIME type based on provider to ensure browser handles it correctly
+                // ElevenLabs = MP3 (audio/mpeg), Cartesia/Deepgram = WAV (audio/wav)
+                const mimeType = audioProvider === "elevenlabs" ? "audio/mpeg" : "audio/wav";
+                const typedBlob = new Blob([audioBlob], { type: mimeType });
+
+                audioUrl = URL.createObjectURL(typedBlob);
 
             } catch (error) {
                 console.warn(`TTS Attempt ${attempt + 1} failed:`, error);
@@ -320,6 +412,7 @@ export default function InterviewPage() {
                 setIsProcessing(false);
                 setIsSpeaking(true);
                 if (isCodingMode) setIsCodingMode(false);
+                if (onPlay) onPlay();
             } catch (playError) {
                 console.error("Audio playback error:", playError);
                 // If playback fails (e.g. autoplay policy), try fallback
@@ -402,7 +495,37 @@ export default function InterviewPage() {
             setMessages(updatedMessages);
             messagesRef.current = updatedMessages;
 
-            speak(aiText);
+            // SMART CODE MODE DETECTION
+            if (aiText.includes("[CODE_MODE]")) {
+                console.log("⚡ Smart Method Detected: CODE_MODE");
+
+                // PARSE Content
+                let spokenText = aiText.replace(/\[CODE_MODE\]/g, "").trim();
+                let params = null;
+
+                // Extract JSON if present
+                if (spokenText.includes("[PROBLEM_DETAILS]")) {
+                    try {
+                        const parts = spokenText.split("[PROBLEM_DETAILS]");
+                        spokenText = parts[0].trim(); // First part is speech
+                        const jsonString = parts[1].split("[/PROBLEM_DETAILS]")[0].trim();
+                        params = JSON.parse(jsonString);
+                        console.log("🧩 Parsed Problem Details:", params);
+                        setProblemDetails(params);
+                    } catch (e) {
+                        console.error("Failed to parse problem details JSON", e);
+                    }
+                }
+
+                // ACTION: Show Tooltip ONLY when audio starts (synced)
+                speak(spokenText, () => {
+                    if (!isCodingMode) {
+                        setShowCodeTooltip(true);
+                    }
+                });
+            } else {
+                speak(aiText);
+            }
         } catch (error) {
             console.error("Error fetching AI response:", error);
             setIsProcessing(false);
@@ -418,6 +541,7 @@ export default function InterviewPage() {
             handleUserResponse(text.trim());
             setTranscript("");
             transcriptRef.current = "";
+            accumulatedTranscriptRef.current = ""; // Clear accumulator on submit
         } else if (micOnRef.current && !isSpeakingRef.current && !isProcessingRef.current) {
             // Just noise or empty
         }
@@ -453,31 +577,28 @@ export default function InterviewPage() {
                     }
                 }
 
-                // UI update: Show whatever we have (interim or final)
-                const displayText = interimTranscript || finalTranscript;
-                if (displayText) {
-                    setTranscript(displayText);
+                // Accumulation Logic
+                // We show Accumulated + Current Session
+                const currentSessionText = interimTranscript || finalTranscript;
+                const fullDisplayText = (accumulatedTranscriptRef.current + " " + currentSessionText).trim();
+
+                if (fullDisplayText) {
+                    setTranscript(fullDisplayText);
+                    transcriptRef.current = fullDisplayText;
                 }
 
                 // Submission logic: Only trust FINAL results
                 if (finalTranscript.trim()) {
                     clearTimeout(silenceTimer.current);
 
-                    // Small delay to allow for natural pauses between sentences in a single turn, 
-                    // but since continuous=false, this "turn" might end abruptly. 
-                    // We need to accumulate? No, turn-based means we interpret *this* utternace.
-                    // For short 800ms silence = submit.
-
-                    // Actually, with continuous=false, onend might fire right after final.
-                    // We should capture the final text and store it, or submit it.
-                    // Let's use the silence timer to debounce the submission.
-
-                    // Update the Ref so stopAndSubmit has it
-                    transcriptRef.current = finalTranscript;
+                    // If we have a final result, we update the accumulated ref TEMPORARILY 
+                    // in case the mic restarts, BUT strictly speaking, 'accumulated' 
+                    // is for *previous* sessions. 
+                    // Actually, if we get a final result, we should just let the timer decide when to submit.
 
                     silenceTimer.current = setTimeout(() => {
                         stopAndSubmit();
-                    }, 2000);
+                    }, 3000); // 3 seconds timeout
                 }
             };
 
@@ -495,6 +616,17 @@ export default function InterviewPage() {
 
             recognitionRef.current.onend = () => {
                 setIsRecording(false);
+
+                // Save what we heard in this session to the accumulator
+                // BUT only if we didn't just submit.
+                // If stopAndSubmit fired, it clears the accumulator.
+                // We need to grab the *current* transcript state (which includes previous accumulated)
+                // actually, the safest way with continuous=false:
+                // Whatever is in 'transcriptRef.current' is the total text so far.
+                // So we preserve it.
+                if (transcriptRef.current.trim()) {
+                    accumulatedTranscriptRef.current = transcriptRef.current.trim();
+                }
 
                 // Auto-restart loop (The "Pulse" of the conversation)
                 // Only restart if: Mic is ON, AI is NOT speaking, AI is NOT thinking
@@ -514,13 +646,7 @@ export default function InterviewPage() {
         }
     }, [startListening, stopAndSubmit]);
 
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
-            if (recognitionRef.current) recognitionRef.current.abort();
-        };
-    }, []);
+
 
     const toggleMic = useCallback(() => {
         const newState = !micOn;
@@ -543,19 +669,25 @@ export default function InterviewPage() {
 
     const handleCodeSubmit = async () => {
         setIsProcessing(true);
-        const codeMessage = `[CODE SUBMISSION]:\n\`\`\`javascript\n${code}\n\`\`\``;
+        const codeMessage = `[CODE SUBMISSION]:
+\`\`\`javascript
+${code}
+\`\`\`
+Time Complexity: ${timeComplexity}
+Space Complexity: ${spaceComplexity}
+Explanation: ${codeExplanation}`;
         await handleUserResponse(codeMessage);
     };
 
     return (
-        <div className="flex flex-col h-[100dvh] bg-neutral-950 text-white">
+        <div className="flex flex-col h-[100dvh] bg-neutral-950 text-white overflow-hidden">
             {/* Video Area */}
-            <div className={`flex-1 flex md:max-h-[85vh] transition-all duration-500 
+            <div className={`flex-1 flex transition-all duration-500 
                 ${isCodingMode ? 'flex-col md:flex-row p-4 gap-4' : 'flex-col md:flex-row items-center justify-center p-0 md:p-4 md:gap-4'}`}>
 
                 {/* Main Content Area: Either Video (when not coding) or Code Editor (when coding) */}
                 <div className={`relative bg-neutral-900 overflow-hidden shadow-2xl transition-all duration-500 
-                    ${isCodingMode ? 'w-full md:w-2/3 order-2 rounded-2xl border border-neutral-800' : 'w-full md:max-w-4xl h-full md:h-auto md:aspect-video order-1 rounded-none md:rounded-2xl md:border border-neutral-800'}`}>
+                    ${isCodingMode ? 'w-full md:w-2/3 order-2 rounded-2xl border border-neutral-800' : 'w-full md:max-w-7xl h-full order-1 rounded-none md:rounded-2xl md:border border-neutral-800'}`}>
 
                     {isCodingMode ? (
                         // CODING ENVIRONMENT
@@ -596,6 +728,37 @@ export default function InterviewPage() {
                                         minHeight: "100%",
                                     }}
                                 />
+                            </div>
+
+                            {/* 3. Analysis Inputs (Horizontal Bar) */}
+                            <div className="bg-neutral-800/80 border-t border-neutral-700 p-3 flex items-center gap-3 shrink-0">
+                                <div className="flex-1 flex items-center gap-2">
+                                    <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-bold shrink-0">Analysis:</span>
+                                    <div className="relative w-24 shrink-0">
+                                        <input
+                                            value={timeComplexity}
+                                            onChange={(e) => setTimeComplexity(e.target.value)}
+                                            placeholder="Time: O(n)"
+                                            className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                                        />
+                                    </div>
+                                    <div className="relative w-24 shrink-0">
+                                        <input
+                                            value={spaceComplexity}
+                                            onChange={(e) => setSpaceComplexity(e.target.value)}
+                                            placeholder="Space: O(1)"
+                                            className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                                        />
+                                    </div>
+                                    <div className="relative flex-1">
+                                        <input
+                                            value={codeExplanation}
+                                            onChange={(e) => setCodeExplanation(e.target.value)}
+                                            placeholder="Briefly explain your approach..."
+                                            className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                                        />
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     ) : (
@@ -658,47 +821,82 @@ export default function InterviewPage() {
                 </div>
 
                 {/* SIDEBAR (Visible only in Coding Mode) */}
+                {/* SIDEBAR (Visible only in Coding Mode) */}
                 {isCodingMode && (
-                    <div className="w-full md:w-1/3 order-1 flex flex-col gap-4 animate-in slide-in-from-left-10 duration-500">
-                        {/* AI Sidebar View ("Camera Off" static avatar as per request) */}
-                        <div className="w-full aspect-video bg-neutral-900 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center">
-                            <div className="flex flex-col items-center opacity-70">
-                                <Avatar className="w-20 h-20 border-2 border-neutral-700 mb-2">
+                    <div className="w-full md:w-1/3 order-1 flex flex-col gap-4 animate-in slide-in-from-left-10 duration-500 h-[calc(100vh-100px)]">
+                        {/* 1. Interviewer View */}
+                        <div className="w-full h-40 bg-neutral-900 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center shrink-0 shadow-lg">
+                            <div className="flex flex-col items-center opacity-80">
+                                <Avatar className="w-12 h-12 border-2 border-neutral-700 mb-2">
                                     <AvatarImage src="/avatar.jpg" className="object-cover grayscale" />
                                     <AvatarFallback>Sneha</AvatarFallback>
                                 </Avatar>
-                                <span className="text-xs text-neutral-500">Interviewer (Listening)</span>
+                                <span className="text-[10px] text-neutral-500 uppercase tracking-widest font-semibold">Interviewer</span>
                             </div>
                         </div>
 
-                        {/* Context/Prompt Area */}
-                        <div className="flex-1 bg-neutral-900/50 rounded-xl p-4 border border-neutral-800/50 overflow-y-auto">
-                            <h4 className="text-sm font-semibold text-indigo-400 mb-2">Instructions</h4>
-                            <p className="text-sm text-neutral-400 leading-relaxed">
-                                {messages[messages.length - 1]?.role === 'assistant' ? messages[messages.length - 1].content : "Waiting for instructions..."}
-                            </p>
+                        {/* 2. Problem Statement Area (Scrollable) */}
+                        <div className="flex-1 bg-neutral-900/50 rounded-xl p-5 border border-neutral-800/50 overflow-y-auto space-y-4 shadow-inner custom-scrollbar relative">
+                            {problemDetails ? (
+                                <>
+                                    <div className="prose prose-invert prose-sm max-w-none">
+                                        <h4 className="text-lg font-bold text-indigo-400 mb-2">{problemDetails.title}</h4>
+                                        <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap font-sans">
+                                            {problemDetails.description.replace(/`/g, "")}
+                                        </p>
+                                    </div>
+
+                                    {/* Examples */}
+                                    {problemDetails.examples && problemDetails.examples.length > 0 && (
+                                        <div className="space-y-3 mt-4">
+                                            <h5 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">Examples</h5>
+                                            {problemDetails.examples.map((ex, i) => (
+                                                <div key={i} className="bg-black/40 rounded-lg p-3 border border-white/5 text-sm font-mono">
+                                                    <div className="flex gap-2">
+                                                        <span className="text-neutral-500 shrink-0">In:</span>
+                                                        <span className="text-emerald-400">{ex.input}</span>
+                                                    </div>
+                                                    <div className="flex gap-2 mt-1">
+                                                        <span className="text-neutral-500 shrink-0">Out:</span>
+                                                        <span className="text-indigo-400">{ex.output}</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
+                            ) : (
+                                <div className="h-full flex flex-col items-center justify-center text-neutral-500 space-y-2">
+                                    <div className="w-8 h-8 border-2 border-dashed border-neutral-700 rounded-full animate-spin-slow"></div>
+                                    <p className="text-sm">Waiting for problem statement...</p>
+                                    <p className="text-xs text-neutral-600 px-4 text-center">
+                                        The AI will provide the problem details shortly.
+                                    </p>
+                                </div>
+                            )}
                         </div>
+
                     </div>
                 )}
 
                 {/* User Video Overlay - Fixed to Screen (Desktop: Bottom-Right, Mobile: Top-Right) */}
-                <motion.div
-                    drag
-                    dragConstraints={{ left: -300, right: 0, top: 0, bottom: 300 }}
-                    whileHover={{ scale: 1.05 }}
-                    className={`fixed top-20 right-4 md:top-auto md:bottom-28 md:right-8 z-40
-                    w-28 md:w-64 aspect-video bg-black rounded-xl border border-white/10 overflow-hidden shadow-2xl 
-                    ${isCodingMode ? 'opacity-75 hover:opacity-100' : ''}`}
-                >
-                    {cameraOn ? (
-                        <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover transform scale-x-[-1]" />
-                    ) : (
-                        <div className="w-full h-full flex items-center justify-center bg-neutral-800">
-                            <VideoOff className="w-6 h-6 text-muted-foreground" />
-                        </div>
-                    )}
-                    <div className="absolute bottom-2 left-3 text-[10px] md:text-xs font-medium text-white/50 tracking-wider">YOU</div>
-                </motion.div>
+                {!isCodingMode && (
+                    <motion.div
+                        drag
+                        dragConstraints={{ left: -300, right: 0, top: 0, bottom: 300 }}
+                        whileHover={{ scale: 1.05 }}
+                        className="fixed top-20 right-4 md:top-auto md:bottom-28 md:right-8 z-40 w-28 md:w-64 aspect-video bg-black rounded-xl border border-white/10 overflow-hidden shadow-2xl"
+                    >
+                        {cameraOn ? (
+                            <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover transform scale-x-[-1]" />
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-neutral-800">
+                                <VideoOff className="w-6 h-6 text-muted-foreground" />
+                            </div>
+                        )}
+                        <div className="absolute bottom-2 left-3 text-[10px] md:text-xs font-medium text-white/50 tracking-wider">YOU</div>
+                    </motion.div>
+                )}
 
             </div>
 
@@ -715,10 +913,29 @@ export default function InterviewPage() {
                         variant={isCodingMode ? "default" : "secondary"}
                         size="icon"
                         className={`rounded-full h-14 w-14 shadow-lg transition-transform hover:scale-105 ${isCodingMode ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : ''}`}
-                        onClick={() => setIsCodingMode(!isCodingMode)}
+                        onClick={() => {
+                            const newMode = !isCodingMode;
+                            setIsCodingMode(newMode);
+                            setShowCodeTooltip(false);
+
+                            if (newMode) {
+                                // Entering Code Mode -> Mute Mic ONLY, keep AI speaking
+                                setMicOn(false);
+                                if (recognitionRef.current) recognitionRef.current.abort();
+                                // Do NOT call cleanupMedia() here as it kills the AI audio player
+                            }
+                        }}
                         title="Toggle Code Editor"
                     >
                         {isCodingMode ? <CodeXml className="h-6 w-6" /> : <Code className="h-6 w-6" />}
+
+                        {/* Tooltip Overlay */}
+                        {showCodeTooltip && !isCodingMode && (
+                            <div className="absolute -top-16 left-1/2 -translate-x-1/2 w-32 bg-indigo-600 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-xl animate-bounce">
+                                Write & Submit Code
+                                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-indigo-600 rotate-45"></div>
+                            </div>
+                        )}
                     </Button>
                 )}
 
@@ -741,6 +958,7 @@ export default function InterviewPage() {
                                 setIsGeneratingFeedback(true);
                                 try {
                                     // DB-First: Use state, not localStorage
+                                    cleanupMedia(); // Force stop before navigating/API
                                     const history = [...contextState.interviewHistory];
                                     const context = {
                                         targetCompany: contextState.targetCompany,
@@ -773,12 +991,12 @@ export default function InterviewPage() {
 
                                     history.unshift(newSession);
 
-                                    // Save to MongoDB
+                                    // Save to MongoDB Atomic Push
                                     try {
                                         await fetch('/api/user/sync', {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({ interviewHistory: history })
+                                            body: JSON.stringify({ pushHistoryItem: newSession })
                                         });
                                     } catch (err) {
                                         console.error("Failed to sync history remotely", err);
@@ -805,13 +1023,15 @@ export default function InterviewPage() {
             </div>
 
             {/* Conversation Captions (Subtitles logic) - Synced with Audio */}
-            {isSpeaking && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant' && (
-                <div className="absolute bottom-32 md:bottom-36 left-0 right-0 text-center px-6 pointer-events-none z-30">
-                    <span className="inline-block bg-black/60 backdrop-blur-md px-6 py-4 rounded-3xl text-white/95 text-lg md:text-xl font-medium shadow-2xl border border-white/10 leading-relaxed tracking-wide">
-                        {messages[messages.length - 1].content}
-                    </span>
-                </div>
-            )}
-        </div>
+            {
+                isSpeaking && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant' && (
+                    <div className="absolute bottom-32 md:bottom-36 left-0 right-0 text-center px-6 pointer-events-none z-30">
+                        <span className="inline-block bg-black/60 backdrop-blur-md px-6 py-4 rounded-3xl text-white/95 text-lg md:text-xl font-medium shadow-2xl border border-white/10 leading-relaxed tracking-wide">
+                            {messages[messages.length - 1].content.replace(/\[CODE_MODE\]|\[PROBLEM_DETAILS\][\s\S]*?\[\/PROBLEM_DETAILS\]/g, "").trim()}
+                        </span>
+                    </div>
+                )
+            }
+        </div >
     );
 }
