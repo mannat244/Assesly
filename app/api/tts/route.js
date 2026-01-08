@@ -16,7 +16,7 @@ export async function POST(req) {
         });
 
         // Voice ID: Brian (Deep Standard Male) - "nPczCjz86yL85AF55l3R"
-        const audio = await elevenlabs.textToSpeech.convert("P7vsEyTOpZ6YUTulin8m", {
+        const audio = await elevenlabs.textToSpeech.convert("KrfvGW2D1x6nS5QnRj2q", {
             text,
             model_id: "eleven_flash_v2_5", // USER REQUESTED V2.5
             output_format: "mp3_44100_128",
